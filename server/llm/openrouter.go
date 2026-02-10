@@ -22,6 +22,15 @@ type Client struct {
 	httpClient *http.Client
 }
 
+type APIError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *APIError) Error() string {
+	return fmt.Sprintf("OpenRouter returned %d: %s", e.StatusCode, e.Body)
+}
+
 func NewClient(apiKey, model string) *Client {
 	return &Client{
 		apiKey:     apiKey,
@@ -93,7 +102,7 @@ func (c *Client) Decide(
 		{
 			Type: "image_url",
 			ImageURL: &imageURL{
-				URL:    fmt.Sprintf("data:image/jpeg;base64,%s", b64Screenshot),
+				URL:    fmt.Sprintf("data:image/png;base64,%s", b64Screenshot),
 				Detail: "high",
 			},
 		},
@@ -132,7 +141,10 @@ func (c *Client) Decide(
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("OpenRouter returned %d: %s", resp.StatusCode, string(respBody))
+		return nil, &APIError{
+			StatusCode: resp.StatusCode,
+			Body:       string(respBody),
+		}
 	}
 
 	var chatResp chatResponse

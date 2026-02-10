@@ -84,10 +84,10 @@ func (b *Browser) Scroll(direction string) error {
 	return chromedp.Run(b.ctx, chromedp.Evaluate(script, nil))
 }
 
-// Screenshot captures the viewport as a JPEG image.
+// Screenshot captures the current viewport as a PNG image.
 func (b *Browser) Screenshot() ([]byte, error) {
 	var buf []byte
-	if err := chromedp.Run(b.ctx, chromedp.FullScreenshot(&buf, 80)); err != nil {
+	if err := chromedp.Run(b.ctx, chromedp.CaptureScreenshot(&buf)); err != nil {
 		return nil, fmt.Errorf("screenshot failed: %w", err)
 	}
 	return buf, nil

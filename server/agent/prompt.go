@@ -30,7 +30,7 @@ You must respond with ONLY a JSON object (no markdown, no explanation outside th
 When you set "done" to true, you MUST also set "success" to indicate the outcome:
 
 ### "done": true, "success": true
-Use ONLY when the user's task has been ACTUALLY accomplished. The requested action was performed and you can visually confirm the result on the screen.
+Use ONLY when the user's task has been ACTUALLY accomplished. The requested action was performed and you can visually confirm the result on the screen. you must verify the exact end state the user asked for. If any check fails, keep done=false, identify the blocker (ad, wrong video, paused state, popup, login gate), and take the next action to remove it.
 
 ### "done": true, "success": false
 Use when you CANNOT complete the task. In the "thought" field, you MUST provide helpful guidance:

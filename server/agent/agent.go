@@ -3,8 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 
@@ -14,6 +16,8 @@ import (
 	"github.com/anamika/zenact-web/server/models"
 	"github.com/google/uuid"
 )
+
+const maxConsecutiveLLMErrors = 3
 
 type Agent struct {
 	cfg       *config.Config
@@ -120,6 +124,7 @@ func (a *Agent) runLoop(taskID string) {
 	defer b.Close()
 
 	ctx := context.Background()
+	llmErrorStreak := 0
 
 	for i := 0; i < a.cfg.MaxIterations; i++ {
 		log.Printf("[Task %s] Iteration %d/%d", taskID, i+1, a.cfg.MaxIterations)
@@ -150,10 +155,29 @@ func (a *Agent) runLoop(taskID string) {
 
 		llmResp, err := a.llmClient.Decide(ctx, SystemPrompt, screenshotBytes, pageURL, pageTitle, task.Prompt, history)
 		if err != nil {
+			llmErrorStreak++
 			log.Printf("[Task %s] LLM error at iteration %d: %v", taskID, i+1, err)
+
+			if statusCode, nonRetryable := nonRetryableLLMStatus(err); nonRetryable {
+				a.failTask(taskID, fmt.Sprintf(
+					"LLM request rejected with status %d. Likely invalid model input (for example oversized screenshot). %s",
+					statusCode, clippedError(err),
+				))
+				return
+			}
+
+			if llmErrorStreak >= maxConsecutiveLLMErrors {
+				a.failTask(taskID, fmt.Sprintf(
+					"LLM failed %d times in a row. %s",
+					llmErrorStreak, clippedError(err),
+				))
+				return
+			}
+
 			time.Sleep(3 * time.Second)
 			continue
 		}
+		llmErrorStreak = 0
 
 		log.Printf("[Task %s] LLM: thought=%q action=%s selector=%q value=%q done=%v success=%v",
 			taskID, llmResp.Thought, llmResp.Action, llmResp.Selector, llmResp.Value, llmResp.Done, llmResp.Success)
@@ -207,6 +231,28 @@ func (a *Agent) runLoop(taskID string) {
 	}
 
 	a.failTask(taskID, fmt.Sprintf("max iterations (%d) reached without completing task", a.cfg.MaxIterations))
+}
+
+func nonRetryableLLMStatus(err error) (int, bool) {
+	var apiErr *llm.APIError
+	if !errors.As(err, &apiErr) {
+		return 0, false
+	}
+
+	statusCode := apiErr.StatusCode
+	if statusCode >= 400 && statusCode < 500 && statusCode != http.StatusTooManyRequests {
+		return statusCode, true
+	}
+	return statusCode, false
+}
+
+func clippedError(err error) string {
+	const maxLen = 320
+	msg := err.Error()
+	if len(msg) <= maxLen {
+		return msg
+	}
+	return msg[:maxLen] + "..."
 }
 
 func (a *Agent) completeTask(taskID string) {
