@@ -82,8 +82,10 @@ func (c *Client) Decide(
 	pageTitle string,
 	taskPrompt string,
 	history []models.Step,
-	domElements string,
+	domContent string,
+	axTree string,
 	summary string,
+	blockedSelectors []string,
 ) (*models.LLMResponse, error) {
 	// System message
 	sysMsg := chatMessage{Role: "system", Content: systemPrompt}
@@ -95,21 +97,31 @@ func (c *Client) Decide(
 	b64Screenshot := base64.StdEncoding.EncodeToString(screenshot)
 
 	domContext := ""
-	if domElements != "" {
-		domContext = fmt.Sprintf("\n\nVISIBLE ELEMENTS:\n%s", domElements)
+	if domContent != "" {
+		domContext = fmt.Sprintf("\n\n## FULL DOM STRUCTURE\n%s", truncate(domContent, 8000))
+	}
+
+	axContext := ""
+	if axTree != "" {
+		axContext = fmt.Sprintf("\n\n## ACCESSIBILITY TREE\n%s", truncate(axTree, 4000))
 	}
 
 	summaryContext := ""
 	if summary != "" {
-		summaryContext = fmt.Sprintf("\n\n## TASK SUMMARY (Long-term Memory)\n%s", summary)
+		summaryContext = fmt.Sprintf("\n\n## TASK SUMMARY (Long-term Memory)\n%s", truncate(summary, 3000))
+	}
+
+	blockedContext := ""
+	if len(blockedSelectors) > 0 {
+		blockedContext = fmt.Sprintf("\n\n## BLOCKED SELECTORS (DO NOT USE)\n%s\nThese selectors have FAILED. Do NOT use them again.", strings.Join(blockedSelectors, "\n"))
 	}
 
 	userContent := []contentPart{
 		{
 			Type: "text",
 			Text: fmt.Sprintf(
-				"Task: %s\n\nCurrent URL: %s\nPage Title: %s%s%s\n\nPrevious actions (last 5):\n%s\n\nAnalyze the screenshot, summary, and element list above. Use the provided selectors to interact with elements. Refer to the summary for context on previous decisions and errors. Respond with JSON only.",
-				taskPrompt, pageURL, pageTitle, summaryContext, domContext, historyText,
+				"Task: %s\n\nCurrent URL: %s\nPage Title: %s%s%s%s%s\n\nPrevious actions (last 5):\n%s\n\nCRITICAL:\n1. Use the DOM STRUCTURE and ACCESSIBILITY TREE to find elements\n2. Prefer selectors: #id > [name=...] > [aria-label=...] > .class\n3. DO NOT use blocked selectors\n4. Verify selector matches visible element before returning\nRespond with JSON only.",
+				taskPrompt, pageURL, pageTitle, summaryContext, blockedContext, domContext, axContext, historyText,
 			),
 		},
 		{
@@ -174,11 +186,11 @@ func (c *Client) Decide(
 	}
 
 	content := chatResp.Choices[0].Message.Content
-	return parseJSONFromContent(content)
+	return parseJSONFromContent(content, blockedSelectors)
 }
 
 // parseJSONFromContent extracts JSON from LLM content, handling markdown code fences.
-func parseJSONFromContent(content string) (*models.LLMResponse, error) {
+func parseJSONFromContent(content string, blockedSelectors []string) (*models.LLMResponse, error) {
 	content = strings.TrimSpace(content)
 
 	// Strip markdown code fences if present
@@ -196,7 +208,21 @@ func parseJSONFromContent(content string) (*models.LLMResponse, error) {
 	if err := json.Unmarshal([]byte(content), &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse LLM JSON: %w\nraw content: %s", err, content)
 	}
+
+	for _, blocked := range blockedSelectors {
+		if resp.Selector == blocked {
+			return nil, fmt.Errorf("LLM used blocked selector '%s' - choose different selector", resp.Selector)
+		}
+	}
+
 	return &resp, nil
+}
+
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // buildHistoryText creates a concise summary of previous steps.

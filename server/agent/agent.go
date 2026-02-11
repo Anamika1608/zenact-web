@@ -18,7 +18,7 @@ import (
 	"github.com/google/uuid"
 )
 
-const maxConsecutiveLLMErrors = 3
+const maxConsecutiveLLMErrors = 5
 
 type Agent struct {
 	cfg       *config.Config
@@ -119,7 +119,7 @@ func (a *Agent) updateSummary(taskID string, iteration int, action models.Action
 		summary.WriteString(fmt.Sprintf("- **Status:** %s FAILED\n", progressIndicator))
 
 		// Add what NOT to repeat - explicit guidance
-		lessonsLearned := extractLessonsLearned(action, thought, executionError)
+		lessonsLearned := extractLessonsLearned(action, executionError)
 		if lessonsLearned != "" {
 			summary.WriteString(fmt.Sprintf("- **DO NOT REPEAT:** %s\n", lessonsLearned))
 		}
@@ -127,7 +127,7 @@ func (a *Agent) updateSummary(taskID string, iteration int, action models.Action
 		summary.WriteString(fmt.Sprintf("- **Status:** %s Completed\n", progressIndicator))
 
 		// Extract and add key discoveries
-		keyDiscoveries := extractKeyDiscoveries(action, thought, executionSuccess, executionError, pageURL)
+		keyDiscoveries := extractKeyDiscoveries(action, executionSuccess, executionError, pageURL)
 		if keyDiscoveries != "" {
 			summary.WriteString(fmt.Sprintf("- **Key Discovery:** %s\n", keyDiscoveries))
 		}
@@ -137,13 +137,13 @@ func (a *Agent) updateSummary(taskID string, iteration int, action models.Action
 }
 
 // extractLessonsLearned provides explicit guidance on what NOT to repeat
-func extractLessonsLearned(action models.Action, thought string, executionError string) string {
+func extractLessonsLearned(action models.Action, executionError string) string {
 	if strings.Contains(executionError, "element not found") || strings.Contains(executionError, "does not have child") {
 		if action.Type == models.ActionClick {
 			return fmt.Sprintf("Selector `%s` doesn't work - element not found or incorrect", truncate(action.Selector, 50))
 		}
 		if action.Type == models.ActionTypeText {
-			return fmt.Sprintf("Textarea interaction failed - editor may use rich text or different DOM structure")
+			return "Textarea interaction failed - editor may use rich text or different DOM structure"
 		}
 	}
 
@@ -158,8 +158,8 @@ func extractLessonsLearned(action models.Action, thought string, executionError 
 	return ""
 }
 
-// extractKeyDiscoveries extracts important information from actions
-func extractKeyDiscoveries(action models.Action, thought string, success bool, executionError string, pageURL string) string {
+// extractKeyDiscoveries extracts important information from successful actions
+func extractKeyDiscoveries(action models.Action, success bool, executionError string, pageURL string) string {
 	if !success && strings.Contains(executionError, "element not found") {
 		if action.Type == models.ActionClick {
 			return fmt.Sprintf("Element selector '%s' was incorrect - need better selector or element may not exist", truncate(action.Selector, 50))
@@ -283,11 +283,13 @@ func (a *Agent) runLoop(taskID string) {
 		history := make([]models.Step, len(task.Steps))
 		copy(history, task.Steps)
 		currentSummary := task.Summary
+		blockedSelectors := task.BlockedSelectors
 		a.mu.RUnlock()
 
-		domElements, _ := b.GetVisibleElements()
+		domContent, _ := b.GetFullDOM()
+		axTree, _ := b.GetAccessibilityTree()
 
-		llmResp, err := a.llmClient.Decide(ctx, SystemPrompt, screenshotBytes, pageURL, pageTitle, task.Prompt, history, domElements, currentSummary)
+		llmResp, err := a.llmClient.Decide(ctx, SystemPrompt, screenshotBytes, pageURL, pageTitle, task.Prompt, history, domContent, axTree, currentSummary, blockedSelectors)
 		if err != nil {
 			llmErrorStreak++
 			log.Printf("[Task %s] LLM error at iteration %d: %v", taskID, i+1, err)
