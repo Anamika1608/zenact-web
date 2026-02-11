@@ -28,13 +28,15 @@ type Task struct {
 // --- Step (one iteration of the agent loop) ---
 
 type Step struct {
-	Iteration  int       `json:"iteration"`
-	Screenshot string    `json:"screenshot,omitempty"` // base64 PNG
-	URL        string    `json:"url"`
-	Title      string    `json:"title"`
-	Thought    string    `json:"thought"`
-	Action     Action    `json:"action"`
-	Timestamp  time.Time `json:"timestamp"`
+	Iteration        int       `json:"iteration"`
+	Screenshot       string    `json:"screenshot,omitempty"` // base64 PNG
+	URL              string    `json:"url"`
+	Title            string    `json:"title"`
+	Thought          string    `json:"thought"`
+	Action           Action    `json:"action"`
+	Timestamp        time.Time `json:"timestamp"`
+	ExecutionSuccess bool      `json:"execution_success"`
+	ExecutionError   string    `json:"execution_error,omitempty"`
 }
 
 // --- Action ---

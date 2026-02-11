@@ -182,7 +182,63 @@ func (a *Agent) runLoop(taskID string) {
 		log.Printf("[Task %s] LLM: thought=%q action=%s selector=%q value=%q done=%v success=%v",
 			taskID, llmResp.Thought, llmResp.Action, llmResp.Selector, llmResp.Value, llmResp.Done, llmResp.Success)
 
-		// Record step
+		// Check for completion BEFORE executing
+		if llmResp.Done {
+			// Create final step
+			step := models.Step{
+				Iteration:  i + 1,
+				Screenshot: b64Screenshot,
+				URL:        pageURL,
+				Title:      pageTitle,
+				Thought:    llmResp.Thought,
+				Action: models.Action{
+					Type:     models.ActionType(llmResp.Action),
+					Selector: llmResp.Selector,
+					Value:    llmResp.Value,
+					Done:     llmResp.Done,
+					Success:  llmResp.Success,
+				},
+				ExecutionSuccess: true,
+				ExecutionError:   "",
+				Timestamp:        time.Now(),
+			}
+
+			a.mu.Lock()
+			task.Steps = append(task.Steps, step)
+			a.mu.Unlock()
+
+			a.broadcast(taskID, models.WSEvent{
+				Type:   models.WSEventStepComplete,
+				TaskID: taskID,
+				Step:   &step,
+			})
+
+			if llmResp.Success {
+				a.completeTask(taskID)
+			} else {
+				a.failTask(taskID, llmResp.Thought)
+			}
+			return
+		}
+
+		// --- EXECUTE ---
+		execSuccess := true
+		execError := ""
+
+		if err := ExecuteAction(b, llmResp); err != nil {
+			log.Printf("[Task %s] Action error at iteration %d: %v", taskID, i+1, err)
+			execSuccess = false
+			execError = err.Error()
+		}
+
+		// Wait for page to settle (longer for clicks/navigates)
+		if llmResp.Action == "click" || llmResp.Action == "navigate" {
+			time.Sleep(3 * time.Second)
+		} else {
+			time.Sleep(1 * time.Second)
+		}
+
+		// NOW create the step with execution results
 		step := models.Step{
 			Iteration:  i + 1,
 			Screenshot: b64Screenshot,
@@ -196,38 +252,22 @@ func (a *Agent) runLoop(taskID string) {
 				Done:     llmResp.Done,
 				Success:  llmResp.Success,
 			},
-			Timestamp: time.Now(),
+			ExecutionSuccess: execSuccess,
+			ExecutionError:   execError,
+			Timestamp:        time.Now(),
 		}
 
+		// Store the step with execution results
 		a.mu.Lock()
 		task.Steps = append(task.Steps, step)
 		a.mu.Unlock()
 
-		// Broadcast step
+		// Broadcast step with execution results
 		a.broadcast(taskID, models.WSEvent{
 			Type:   models.WSEventStepComplete,
 			TaskID: taskID,
 			Step:   &step,
 		})
-
-		// Check for completion
-		if llmResp.Done {
-			if llmResp.Success {
-				a.completeTask(taskID)
-			} else {
-				a.failTask(taskID, llmResp.Thought)
-			}
-			return
-		}
-
-		// --- EXECUTE ---
-		if err := ExecuteAction(b, llmResp); err != nil {
-			log.Printf("[Task %s] Action error at iteration %d: %v", taskID, i+1, err)
-			// Don't fail — let the LLM self-correct on next screenshot
-		}
-
-		// Brief pause for page to settle
-		time.Sleep(1 * time.Second)
 	}
 
 	a.failTask(taskID, fmt.Sprintf("max iterations (%d) reached without completing task", a.cfg.MaxIterations))

@@ -54,13 +54,88 @@ func (b *Browser) Navigate(url string) error {
 	return chromedp.Run(b.ctx, chromedp.Navigate(url))
 }
 
-// Click clicks an element by CSS selector.
+// Click clicks an element by CSS selector with comprehensive error checking.
 func (b *Browser) Click(selector string) error {
+	// 1. Check if element exists first
+	exists, err := b.ElementExists(selector)
+	if err != nil {
+		return fmt.Errorf("failed to check if element exists: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("element not found: %s", selector)
+	}
+
+	// 2. Check if element is visible
+	visible, err := b.ElementVisible(selector)
+	if err != nil {
+		return fmt.Errorf("failed to check element visibility: %w", err)
+	}
+	if !visible {
+		return fmt.Errorf("element exists but is not visible: %s", selector)
+	}
+
+	// 3. Scroll element into view
+	if err := b.ScrollIntoView(selector); err != nil {
+		return fmt.Errorf("failed to scroll element into view: %w", err)
+	}
+
+	// 4. Wait for element to be ready and click
 	timeoutCtx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
 	defer cancel()
-	return chromedp.Run(timeoutCtx,
+
+	err = chromedp.Run(timeoutCtx,
 		chromedp.WaitVisible(selector, chromedp.ByQuery),
 		chromedp.Click(selector, chromedp.ByQuery, chromedp.NodeVisible),
+	)
+
+	if err != nil {
+		return fmt.Errorf("click failed on %s: %w", selector, err)
+	}
+
+	return nil
+}
+
+// ElementExists checks if an element exists in the DOM
+func (b *Browser) ElementExists(selector string) (bool, error) {
+	var exists bool
+	err := chromedp.Run(b.ctx,
+		chromedp.Evaluate(fmt.Sprintf(`document.querySelector('%s') !== null`, selector), &exists),
+	)
+	return exists, err
+}
+
+// ElementVisible checks if an element is visible (has dimensions and not hidden)
+func (b *Browser) ElementVisible(selector string) (bool, error) {
+	var visible bool
+	err := chromedp.Run(b.ctx,
+		chromedp.Evaluate(fmt.Sprintf(`
+            (() => {
+                const el = document.querySelector('%s');
+                if (!el) return false;
+                const rect = el.getBoundingClientRect();
+                const style = window.getComputedStyle(el);
+                return rect.width > 0 && 
+                       rect.height > 0 && 
+                       style.visibility !== 'hidden' &&
+                       style.display !== 'none' &&
+                       style.opacity !== '0';
+            })()
+        `, selector), &visible),
+	)
+	return visible, err
+}
+
+// ScrollIntoView scrolls an element into the viewport
+func (b *Browser) ScrollIntoView(selector string) error {
+	return chromedp.Run(b.ctx,
+		chromedp.Evaluate(fmt.Sprintf(`
+            (() => {
+                const el = document.querySelector('%s');
+                if (el) {
+                    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }
+            })()
+        `, selector), nil),
 	)
 }
 

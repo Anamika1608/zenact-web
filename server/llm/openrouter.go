@@ -200,8 +200,34 @@ func buildHistoryText(history []models.Step) string {
 
 	var sb strings.Builder
 	for _, step := range history[start:] {
-		fmt.Fprintf(&sb, "Step %d: [%s] URL: %s | selector: %q, value: %q — %s\n",
-			step.Iteration, step.Action.Type, step.URL, step.Action.Selector, step.Action.Value, step.Thought)
+		// Status indicator (SUCCESS/FAILED)
+		status := "SUCCESS"
+		if !step.ExecutionSuccess {
+			status = "FAILED"
+		}
+
+		// Build step line
+		fmt.Fprintf(&sb, "Step %d [%s]: %s", step.Iteration, status, step.Action.Type)
+
+		if step.Action.Selector != "" {
+			fmt.Fprintf(&sb, " on selector=%q", step.Action.Selector)
+		}
+		if step.Action.Value != "" {
+			fmt.Fprintf(&sb, " value=%q", step.Action.Value)
+		}
+
+		fmt.Fprintf(&sb, " | URL: %s", step.URL)
+
+		if step.Thought != "" {
+			fmt.Fprintf(&sb, " | Thought: %s", step.Thought)
+		}
+
+		// Show execution error if failed
+		if !step.ExecutionSuccess && step.ExecutionError != "" {
+			fmt.Fprintf(&sb, "\n  Execution Error: %s", step.ExecutionError)
+		}
+
+		sb.WriteString("\n")
 	}
 	return sb.String()
 }
