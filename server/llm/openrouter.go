@@ -82,6 +82,7 @@ func (c *Client) Decide(
 	pageTitle string,
 	taskPrompt string,
 	history []models.Step,
+	domElements string,
 ) (*models.LLMResponse, error) {
 	// System message
 	sysMsg := chatMessage{Role: "system", Content: systemPrompt}
@@ -91,12 +92,18 @@ func (c *Client) Decide(
 
 	// User message with screenshot + context
 	b64Screenshot := base64.StdEncoding.EncodeToString(screenshot)
+
+	domContext := ""
+	if domElements != "" {
+		domContext = fmt.Sprintf("\n\nVISIBLE ELEMENTS:\n%s", domElements)
+	}
+
 	userContent := []contentPart{
 		{
 			Type: "text",
 			Text: fmt.Sprintf(
-				"Task: %s\n\nCurrent URL: %s\nPage Title: %s\n\nPrevious actions:\n%s\n\nAnalyze the screenshot and decide the next action. Respond with JSON only.",
-				taskPrompt, pageURL, pageTitle, historyText,
+				"Task: %s\n\nCurrent URL: %s\nPage Title: %s\n\nPrevious actions:\n%s%s\n\nAnalyze the screenshot and element list above. Use the provided selectors to interact with elements. Respond with JSON only.",
+				taskPrompt, pageURL, pageTitle, historyText, domContext,
 			),
 		},
 		{

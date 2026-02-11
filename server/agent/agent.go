@@ -153,7 +153,9 @@ func (a *Agent) runLoop(taskID string) {
 		copy(history, task.Steps)
 		a.mu.RUnlock()
 
-		llmResp, err := a.llmClient.Decide(ctx, SystemPrompt, screenshotBytes, pageURL, pageTitle, task.Prompt, history)
+		domElements, _ := b.GetVisibleElements()
+
+		llmResp, err := a.llmClient.Decide(ctx, SystemPrompt, screenshotBytes, pageURL, pageTitle, task.Prompt, history, domElements)
 		if err != nil {
 			llmErrorStreak++
 			log.Printf("[Task %s] LLM error at iteration %d: %v", taskID, i+1, err)

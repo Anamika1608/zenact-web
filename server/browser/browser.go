@@ -187,6 +187,60 @@ func (b *Browser) GetTitle() (string, error) {
 	return title, nil
 }
 
+// GetVisibleElements returns a JSON string of visible interactive elements for the LLM.
+func (b *Browser) GetVisibleElements() (string, error) {
+	var result string
+	script := `
+		(() => {
+			const elements = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"]'));
+			const visible = elements
+				.filter(el => {
+					const rect = el.getBoundingClientRect();
+					const style = window.getComputedStyle(el);
+					return rect.width > 0 && rect.height > 0 && 
+						   style.visibility !== 'hidden' && 
+						   style.display !== 'none' &&
+						   rect.top >= 0 && rect.top < window.innerHeight;
+				})
+				.slice(0, 20)
+				.map(el => ({
+					tag: el.tagName.toLowerCase(),
+					id: el.id || '',
+					class: (el.className || '').toString().split(' ').filter(Boolean).join(' '),
+					text: (el.textContent || '').trim().substring(0, 50),
+					type: el.getAttribute('type') || '',
+					name: el.getAttribute('name') || '',
+					placeholder: el.getAttribute('placeholder') || '',
+					selector: generateSelector(el)
+				}));
+			return JSON.stringify(visible);
+		})();
+
+		function generateSelector(el) {
+			if (el.id) return '#' + el.id;
+			if (el.name) return el.tagName.toLowerCase() + '[name="' + el.getAttribute('name') + '"]';
+			let path = [];
+			while (el && el !== document.body) {
+				let selector = el.tagName.toLowerCase();
+				if (el.id) {
+					selector = '#' + el.id;
+					path.unshift(selector);
+					break;
+				}
+				if (el.className && typeof el.className === 'string') {
+					const classes = el.className.split(' ').filter(Boolean).join('.');
+					if (classes) selector += '.' + classes;
+				}
+				path.unshift(selector);
+				el = el.parentElement;
+			}
+			return path.join(' > ');
+		}
+	`
+	err := chromedp.Run(b.ctx, chromedp.Evaluate(script, &result))
+	return result, err
+}
+
 // WaitVisible waits for a selector to be visible.
 func (b *Browser) WaitVisible(selector string) error {
 	timeoutCtx, cancel := context.WithTimeout(b.ctx, 10*time.Second)
