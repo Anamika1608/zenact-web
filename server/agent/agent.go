@@ -108,22 +108,54 @@ func (a *Agent) updateSummary(taskID string, iteration int, action models.Action
 		}
 	}
 	summary.WriteString(fmt.Sprintf("\n"))
-	summary.WriteString(fmt.Sprintf("- **Thought:** %s\n", thought))
+
+	// Only include brief thought - not full context
+	if thought != "" {
+		summary.WriteString(fmt.Sprintf("- **Thought:** %s\n", truncate(thought, 150)))
+	}
 
 	if !executionSuccess && executionError != "" {
 		summary.WriteString(fmt.Sprintf("- **Error:** %s\n", truncate(executionError, 200)))
-		summary.WriteString(fmt.Sprintf("- **Status:** %s %s\n", progressIndicator, "FAILED"))
-	} else if executionSuccess {
-		summary.WriteString(fmt.Sprintf("- **Status:** %s %s\n", progressIndicator, "Completed"))
-	}
+		summary.WriteString(fmt.Sprintf("- **Status:** %s FAILED\n", progressIndicator))
 
-	// Extract and add key discoveries
-	keyDiscoveries := extractKeyDiscoveries(action, thought, executionSuccess, executionError, pageURL)
-	if keyDiscoveries != "" {
-		summary.WriteString(fmt.Sprintf("- **Key Discovery:** %s\n", keyDiscoveries))
+		// Add what NOT to repeat - explicit guidance
+		lessonsLearned := extractLessonsLearned(action, thought, executionError)
+		if lessonsLearned != "" {
+			summary.WriteString(fmt.Sprintf("- **DO NOT REPEAT:** %s\n", lessonsLearned))
+		}
+	} else if executionSuccess {
+		summary.WriteString(fmt.Sprintf("- **Status:** %s Completed\n", progressIndicator))
+
+		// Extract and add key discoveries
+		keyDiscoveries := extractKeyDiscoveries(action, thought, executionSuccess, executionError, pageURL)
+		if keyDiscoveries != "" {
+			summary.WriteString(fmt.Sprintf("- **Key Discovery:** %s\n", keyDiscoveries))
+		}
 	}
 
 	task.Summary = summary.String()
+}
+
+// extractLessonsLearned provides explicit guidance on what NOT to repeat
+func extractLessonsLearned(action models.Action, thought string, executionError string) string {
+	if strings.Contains(executionError, "element not found") || strings.Contains(executionError, "does not have child") {
+		if action.Type == models.ActionClick {
+			return fmt.Sprintf("Selector `%s` doesn't work - element not found or incorrect", truncate(action.Selector, 50))
+		}
+		if action.Type == models.ActionTypeText {
+			return fmt.Sprintf("Textarea interaction failed - editor may use rich text or different DOM structure")
+		}
+	}
+
+	if strings.Contains(executionError, "not visible") {
+		return fmt.Sprintf("Element `%s` exists but is not visible - scroll or dismiss overlays first", truncate(action.Selector, 50))
+	}
+
+	if strings.Contains(executionError, "click failed") {
+		return fmt.Sprintf("Click on `%s` failed - element may be covered or disabled", truncate(action.Selector, 50))
+	}
+
+	return ""
 }
 
 // extractKeyDiscoveries extracts important information from actions

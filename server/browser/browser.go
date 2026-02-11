@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/chromedp/chromedp"
@@ -192,53 +193,50 @@ func (b *Browser) GetVisibleElements() (string, error) {
 	var result string
 	script := `
 		(() => {
-			const elements = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"]'));
-			const visible = elements
-				.filter(el => {
-					const rect = el.getBoundingClientRect();
-					const style = window.getComputedStyle(el);
-					return rect.width > 0 && rect.height > 0 && 
-						   style.visibility !== 'hidden' && 
-						   style.display !== 'none' &&
-						   rect.top >= 0 && rect.top < window.innerHeight;
-				})
-				.slice(0, 20)
-				.map(el => ({
-					tag: el.tagName.toLowerCase(),
-					id: el.id || '',
-					class: (el.className || '').toString().split(' ').filter(Boolean).join(' '),
-					text: (el.textContent || '').trim().substring(0, 50),
-					type: el.getAttribute('type') || '',
-					name: el.getAttribute('name') || '',
-					placeholder: el.getAttribute('placeholder') || '',
-					selector: generateSelector(el)
-				}));
-			return JSON.stringify(visible);
-		})();
-
-		function generateSelector(el) {
-			if (el.id) return '#' + el.id;
-			if (el.name) return el.tagName.toLowerCase() + '[name="' + el.getAttribute('name') + '"]';
-			let path = [];
-			while (el && el !== document.body) {
-				let selector = el.tagName.toLowerCase();
-				if (el.id) {
-					selector = '#' + el.id;
-					path.unshift(selector);
-					break;
-				}
-				if (el.className && typeof el.className === 'string') {
-					const classes = el.className.split(' ').filter(Boolean).join('.');
-					if (classes) selector += '.' + classes;
-				}
-				path.unshift(selector);
-				el = el.parentElement;
+			try {
+				const elements = Array.from(document.querySelectorAll('a, button, input, select, textarea, [role="button"], [role="link"]'));
+				const visible = elements
+					.filter(el => {
+						const rect = el.getBoundingClientRect();
+						const style = window.getComputedStyle(el);
+						return rect.width > 0 && rect.height > 0 && 
+							   style.visibility !== 'hidden' && 
+							   style.display !== 'none' &&
+							   rect.top >= 0 && rect.top < window.innerHeight;
+					})
+					.slice(0, 15)
+					.map(el => {
+						const tag = el.tagName.toLowerCase();
+						const id = el.id || '';
+						const cls = el.className && typeof el.className === 'string' ? el.className.split(' ').filter(Boolean).join(' ') : '';
+						return {
+							tag: tag,
+							id: id,
+							class: cls,
+							text: (el.textContent || '').trim().substring(0, 50),
+							type: el.getAttribute('type') || '',
+							name: el.getAttribute('name') || '',
+							placeholder: el.getAttribute('placeholder') || '',
+							selector: tag + (id ? '#' + id : cls ? '[class~="' + cls.split(' ')[0] + '"]' : '')
+						};
+					});
+				return JSON.stringify(visible);
+			} catch (e) {
+				return JSON.stringify({error: e.toString()});
 			}
-			return path.join(' > ');
-		}
+		})();
 	`
 	err := chromedp.Run(b.ctx, chromedp.Evaluate(script, &result))
-	return result, err
+	if err != nil {
+		return "", err
+	}
+
+	// If result contains error, return empty
+	if strings.Contains(result, "error") {
+		return "[]", nil
+	}
+
+	return result, nil
 }
 
 // WaitVisible waits for a selector to be visible.
