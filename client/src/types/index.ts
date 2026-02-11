@@ -8,7 +8,9 @@ export type ActionType =
   | "type"
   | "scroll"
   | "wait"
-  | "done";
+  | "done"
+  | "hold"
+  | "drag";
 
 export interface Action {
   action: ActionType; // Go json tag is "action", not "type"

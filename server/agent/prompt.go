@@ -11,9 +11,9 @@ You will receive:
 You must respond with ONLY a JSON object (no markdown, no explanation outside the JSON) in this exact format:
 {
   "thought": "Brief analysis of what you see and what you need to do next",
-  "action": "navigate|click|type|scroll|wait|done",
-  "selector": "CSS selector for the target element (required for click and type)",
-  "value": "URL for navigate, text for type, direction for scroll (up/down), empty for others",
+  "action": "navigate|click|type|scroll|wait|done|hold|drag",
+  "selector": "CSS selector for the target element (required for click, type, hold, drag)",
+  "value": "URL for navigate, text for type, direction for scroll (up/down), duration in ms for hold, target for drag",
   "done": false,
   "success": false
 }
@@ -25,6 +25,8 @@ You must respond with ONLY a JSON object (no markdown, no explanation outside th
 - "scroll": Scroll the page. Put "up" or "down" in "value". No selector needed.
 - "wait": Wait for the page to load. No selector or value needed.
 - "done": The task is finished. You MUST set "done" to true AND set "success" appropriately (see below).
+- "hold": Click and hold an element. Put CSS selector in "selector" and duration in milliseconds in "value" (default 1000ms).
+- "drag": Drag an element to a target. Put source CSS selector in "selector" and target in "value" (either a CSS selector or "x,y" coordinates).
 
 ## Completion Rules (CRITICAL):
 When you set "done" to true, you MUST also set "success" to indicate the outcome:

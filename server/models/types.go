@@ -48,6 +48,8 @@ const (
 	ActionScroll   ActionType = "scroll"
 	ActionWait     ActionType = "wait"
 	ActionDone     ActionType = "done"
+	ActionHold     ActionType = "hold"
+	ActionDrag     ActionType = "drag"
 )
 
 type Action struct {

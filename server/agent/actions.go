@@ -2,6 +2,7 @@ package agent
 
 import (
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/anamika/zenact-web/server/browser"
@@ -44,6 +45,27 @@ func ExecuteAction(b *browser.Browser, resp *models.LLMResponse) error {
 	case models.ActionWait:
 		time.Sleep(2 * time.Second)
 		return nil
+
+	case models.ActionHold:
+		if resp.Selector == "" {
+			return fmt.Errorf("hold action requires a selector")
+		}
+		duration := 1000
+		if resp.Value != "" {
+			if d, err := strconv.Atoi(resp.Value); err == nil {
+				duration = d
+			}
+		}
+		return b.Hold(resp.Selector, time.Duration(duration)*time.Millisecond)
+
+	case models.ActionDrag:
+		if resp.Selector == "" {
+			return fmt.Errorf("drag action requires a source selector")
+		}
+		if resp.Value == "" {
+			return fmt.Errorf("drag action requires a target in value")
+		}
+		return b.Drag(resp.Selector, resp.Value)
 
 	case models.ActionDone:
 		return nil
