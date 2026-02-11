@@ -83,6 +83,7 @@ func (c *Client) Decide(
 	taskPrompt string,
 	history []models.Step,
 	domElements string,
+	summary string,
 ) (*models.LLMResponse, error) {
 	// System message
 	sysMsg := chatMessage{Role: "system", Content: systemPrompt}
@@ -98,12 +99,17 @@ func (c *Client) Decide(
 		domContext = fmt.Sprintf("\n\nVISIBLE ELEMENTS:\n%s", domElements)
 	}
 
+	summaryContext := ""
+	if summary != "" {
+		summaryContext = fmt.Sprintf("\n\n## TASK SUMMARY (Long-term Memory)\n%s", summary)
+	}
+
 	userContent := []contentPart{
 		{
 			Type: "text",
 			Text: fmt.Sprintf(
-				"Task: %s\n\nCurrent URL: %s\nPage Title: %s\n\nPrevious actions:\n%s%s\n\nAnalyze the screenshot and element list above. Use the provided selectors to interact with elements. Respond with JSON only.",
-				taskPrompt, pageURL, pageTitle, historyText, domContext,
+				"Task: %s\n\nCurrent URL: %s\nPage Title: %s%s%s\n\nPrevious actions (last 5):\n%s\n\nAnalyze the screenshot, summary, and element list above. Use the provided selectors to interact with elements. Refer to the summary for context on previous decisions and errors. Respond with JSON only.",
+				taskPrompt, pageURL, pageTitle, summaryContext, domContext, historyText,
 			),
 		},
 		{

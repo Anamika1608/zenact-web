@@ -20,6 +20,7 @@ type Task struct {
 	Prompt      string     `json:"prompt"`
 	Status      TaskStatus `json:"status"`
 	Steps       []Step     `json:"steps"`
+	Summary     string     `json:"summary,omitempty"`
 	Error       string     `json:"error,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`
 	CompletedAt *time.Time `json:"completed_at,omitempty"`

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -42,11 +43,13 @@ func New(cfg *config.Config, llmClient *llm.Client) *Agent {
 // StartTask creates a new task and launches the agent loop.
 func (a *Agent) StartTask(prompt string) string {
 	taskID := uuid.New().String()
+	initialSummary := fmt.Sprintf("## Task Summary\n\n**Goal:** %s\n\n**Initial Context:**\n- Task just started\n- No pages visited yet\n- No actions taken\n\n**Progress:**\n- [ ] Started task\n", prompt)
 	task := &models.Task{
 		ID:        taskID,
 		Prompt:    prompt,
 		Status:    models.TaskStatusPending,
 		Steps:     []models.Step{},
+		Summary:   initialSummary,
 		CreatedAt: time.Now(),
 	}
 
@@ -56,6 +59,102 @@ func (a *Agent) StartTask(prompt string) string {
 
 	go a.runLoop(taskID)
 	return taskID
+}
+
+// updateSummary updates the task summary with new information after each step.
+func (a *Agent) updateSummary(taskID string, iteration int, action models.Action, thought string, executionSuccess bool, executionError string, pageURL string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+
+	task, ok := a.tasks[taskID]
+	if !ok {
+		return
+	}
+
+	var summary strings.Builder
+	summary.WriteString(task.Summary)
+
+	// Check if this step already exists in summary
+	if strings.Contains(task.Summary, fmt.Sprintf("Step %d:", iteration)) {
+		return
+	}
+
+	// Determine current phase based on iteration and content
+	phase := "Progress"
+	if strings.Contains(task.Summary, "Logged in") || strings.Contains(pageURL, "dashboard") || strings.Contains(pageURL, "account") {
+		phase = "Logged in / Post-login"
+	} else if strings.Contains(task.Summary, "Navigation") && !strings.Contains(task.Summary, "logged in") {
+		phase = "Navigation"
+	}
+
+	// Build progress indicator
+	progressIndicator := "[ ]"
+	if executionSuccess {
+		progressIndicator = "[x]"
+	}
+
+	// Write step summary
+	summary.WriteString(fmt.Sprintf("\n### Step %d (%s)\n", iteration, phase))
+	summary.WriteString(fmt.Sprintf("- **Action:** %s", action.Type))
+
+	if action.Selector != "" {
+		summary.WriteString(fmt.Sprintf(" on `%s`", action.Selector))
+	}
+	if action.Value != "" {
+		if action.Type == models.ActionTypeText {
+			summary.WriteString(fmt.Sprintf(" with value: \"%s\"", truncate(action.Value, 50)))
+		} else {
+			summary.WriteString(fmt.Sprintf(" with value: %s", truncate(action.Value, 50)))
+		}
+	}
+	summary.WriteString(fmt.Sprintf("\n"))
+	summary.WriteString(fmt.Sprintf("- **Thought:** %s\n", thought))
+
+	if !executionSuccess && executionError != "" {
+		summary.WriteString(fmt.Sprintf("- **Error:** %s\n", truncate(executionError, 200)))
+		summary.WriteString(fmt.Sprintf("- **Status:** %s %s\n", progressIndicator, "FAILED"))
+	} else if executionSuccess {
+		summary.WriteString(fmt.Sprintf("- **Status:** %s %s\n", progressIndicator, "Completed"))
+	}
+
+	// Extract and add key discoveries
+	keyDiscoveries := extractKeyDiscoveries(action, thought, executionSuccess, executionError, pageURL)
+	if keyDiscoveries != "" {
+		summary.WriteString(fmt.Sprintf("- **Key Discovery:** %s\n", keyDiscoveries))
+	}
+
+	task.Summary = summary.String()
+}
+
+// extractKeyDiscoveries extracts important information from actions
+func extractKeyDiscoveries(action models.Action, thought string, success bool, executionError string, pageURL string) string {
+	if !success && strings.Contains(executionError, "element not found") {
+		if action.Type == models.ActionClick {
+			return fmt.Sprintf("Element selector '%s' was incorrect - need better selector or element may not exist", truncate(action.Selector, 50))
+		}
+	}
+
+	if success {
+		if action.Type == models.ActionTypeText {
+			return fmt.Sprintf("Successfully typed into %s", truncate(action.Selector, 50))
+		}
+		if action.Type == models.ActionClick {
+			return fmt.Sprintf("Successfully clicked %s", truncate(action.Selector, 50))
+		}
+		if action.Type == models.ActionNavigate {
+			return fmt.Sprintf("Navigated to %s", pageURL)
+		}
+	}
+
+	return ""
+}
+
+// truncate truncates a string to the given length
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + "..."
 }
 
 // GetTask returns a copy of the task.
@@ -151,11 +250,12 @@ func (a *Agent) runLoop(taskID string) {
 		a.mu.RLock()
 		history := make([]models.Step, len(task.Steps))
 		copy(history, task.Steps)
+		currentSummary := task.Summary
 		a.mu.RUnlock()
 
 		domElements, _ := b.GetVisibleElements()
 
-		llmResp, err := a.llmClient.Decide(ctx, SystemPrompt, screenshotBytes, pageURL, pageTitle, task.Prompt, history, domElements)
+		llmResp, err := a.llmClient.Decide(ctx, SystemPrompt, screenshotBytes, pageURL, pageTitle, task.Prompt, history, domElements, currentSummary)
 		if err != nil {
 			llmErrorStreak++
 			log.Printf("[Task %s] LLM error at iteration %d: %v", taskID, i+1, err)
@@ -208,6 +308,9 @@ func (a *Agent) runLoop(taskID string) {
 			a.mu.Lock()
 			task.Steps = append(task.Steps, step)
 			a.mu.Unlock()
+
+			// Update the task summary with final step
+			a.updateSummary(taskID, i+1, step.Action, step.Thought, true, "", pageURL)
 
 			a.broadcast(taskID, models.WSEvent{
 				Type:   models.WSEventStepComplete,
@@ -263,6 +366,9 @@ func (a *Agent) runLoop(taskID string) {
 		a.mu.Lock()
 		task.Steps = append(task.Steps, step)
 		a.mu.Unlock()
+
+		// Update the task summary with this step's information
+		a.updateSummary(taskID, i+1, step.Action, step.Thought, execSuccess, execError, pageURL)
 
 		// Broadcast step with execution results
 		a.broadcast(taskID, models.WSEvent{
